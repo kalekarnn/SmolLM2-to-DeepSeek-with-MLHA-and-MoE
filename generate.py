@@ -1,3 +1,6 @@
+import pickle
+import sys
+
 import torch
 from transformers import AutoTokenizer
 
@@ -9,9 +12,38 @@ def load_trained_model(checkpoint_path):
     config = ModelConfig()
     model = DeepSeekForCausalLM(config)
 
-    # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    model.load_state_dict(checkpoint["model_state_dict"])
+    # Load checkpoint with weights_only=False to handle the ModelConfig class
+    try:
+        # First try to load with weights_only=False (safer but might fail)
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    except Exception as e:
+        print(f"Standard loading failed: {e}")
+        print("Trying alternative loading method...")
+
+        # Add ModelConfig to safe globals
+        torch.serialization.add_safe_globals([ModelConfig])
+
+        try:
+            # Try again with weights_only=True but with ModelConfig added to safe globals
+            checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        except Exception as e2:
+            print(f"Alternative loading also failed: {e2}")
+            print("Trying final fallback method...")
+
+            # Final fallback: manually load the state dict
+            checkpoint = {
+                "model_state_dict": torch.load(
+                    checkpoint_path, map_location="cpu", weights_only=True
+                )
+            }
+
+    # Load state dict
+    if "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        model.load_state_dict(checkpoint)
+
+    print(f"Successfully loaded checkpoint from {checkpoint_path}")
 
     # Move model to device
     if torch.cuda.is_available():
@@ -38,10 +70,11 @@ def generate_text(
     input_ids = tokenizer(prompt, return_tensors="pt")["input_ids"].to(device)
 
     with torch.no_grad():
-        generated_tokens = input_ids[0].tolist()
-
         for _ in range(max_length):
+            # Forward pass
             outputs = model(input_ids)
+
+            # Get logits for the next token (last position)
             next_token_logits = outputs[..., -1, :] / temperature
 
             # Apply top-p sampling
@@ -57,20 +90,23 @@ def generate_text(
             ].clone()
             sorted_indices_to_remove[..., 0] = 0
             indices_to_remove = sorted_indices_to_remove.scatter(
-                0, sorted_indices, sorted_indices_to_remove
+                1, sorted_indices, sorted_indices_to_remove
             )
             next_token_logits[indices_to_remove] = float("-inf")
 
-            next_token = torch.multinomial(torch.softmax(next_token_logits, dim=-1), 1)
+            # Sample next token
+            probs = torch.softmax(next_token_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
 
-            generated_tokens.append(next_token.item())
-            next_token = next_token.unsqueeze(-1)
+            # Add the token to input_ids
             input_ids = torch.cat([input_ids, next_token], dim=1)
 
+            # Stop if EOS token is generated
             if next_token.item() == tokenizer.eos_token_id:
                 break
 
-    return tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    # Decode the generated tokens
+    return tokenizer.decode(input_ids[0], skip_special_tokens=True)
 
 
 def main():

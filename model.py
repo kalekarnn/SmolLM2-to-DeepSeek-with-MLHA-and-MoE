@@ -7,6 +7,25 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 
 
+class ModelConfig:
+    def __init__(self):
+        self.vocab_size = 49152
+        self.hidden_size = 576
+        self.intermediate_size = 1536
+        self.num_hidden_layers = 30
+        self.num_attention_heads = 9
+        self.num_experts = 8
+        self.top_k = 2
+        self.hidden_act = "gelu"
+        self.max_position_embeddings = 512
+        self.initializer_range = 0.041666666666666664
+        self.rms_norm_eps = 1e-5
+        self.tie_word_embeddings = True
+        self.pad_token_id = None
+        self.bos_token_id = 0
+        self.eos_token_id = 0
+
+
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)

@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from model import DeepSeekForCausalLM
+from model import DeepSeekForCausalLM, ModelConfig
 
 
 def count_parameters(model):
@@ -26,25 +26,6 @@ def get_model_size(model):
         buffer_size += buffer.nelement() * buffer.element_size()
     size_mb = (param_size + buffer_size) / 1024**2
     return size_mb
-
-
-class ModelConfig:
-    def __init__(self):
-        self.vocab_size = 49152
-        self.hidden_size = 576
-        self.intermediate_size = 1536
-        self.num_hidden_layers = 30
-        self.num_attention_heads = 9
-        self.num_experts = 8
-        self.top_k = 2
-        self.hidden_act = "gelu"
-        self.max_position_embeddings = 512
-        self.initializer_range = 0.041666666666666664
-        self.rms_norm_eps = 1e-5
-        self.tie_word_embeddings = True
-        self.pad_token_id = None
-        self.bos_token_id = 0
-        self.eos_token_id = 0
 
 
 def prepare_dataset():
@@ -193,13 +174,9 @@ def train_model(
         # Save checkpoint every 500 steps
         if step % 500 == 0:
             checkpoint_path = f"checkpoint_{step}.pt"
+            # Save only the model state dict for easier loading
             torch.save(
-                {
-                    "step": step,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "loss": loss.item() * gradient_accumulation_steps,
-                },
+                model.state_dict(),
                 checkpoint_path,
             )
             print(f"\nSaved checkpoint to {checkpoint_path}")
@@ -219,10 +196,13 @@ def main():
     # Train model
     model = train_model(model, dataset, tokenizer)
 
-    # Save final model
-    torch.save(
-        {"model_state_dict": model.state_dict(), "config": config}, "final_model.pt"
-    )
+    # Save final model - save only the state dict for easier loading
+    torch.save(model.state_dict(), "final_model.pt")
+
+    # Also save the config separately if needed
+    config_path = "model_config.pt"
+    torch.save({"config": vars(config)}, config_path)
+    print(f"Saved model config to {config_path}")
 
     print("Training completed!")
 
